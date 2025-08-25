@@ -1,0 +1,15 @@
+torch>=2.1
+torchvision>=0.16
+torchaudio>=2.1
+transformers>=4.42
+datasets>=2.20
+sentence-transformers>=3.0
+umap-learn>=0.5.5
+hdbscan>=0.8.35
+faiss-cpu>=1.8.0
+scikit-learn>=1.4
+numpy>=1.26
+pandas>=2.2
+matplotlib>=3.8
+plotly>=5.22
+tqdm>=4.66
