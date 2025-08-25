@@ -7,6 +7,7 @@ from tqdm import tqdm
 import torch
 from datasets import load_dataset
 from transformers import AutoModel, AutoTokenizer, AutoImageProcessor
+from transformers import CLIPProcessor, CLIPModel  # Added for CLIP handling
 from sentence_transformers import SentenceTransformer
 from sklearn.cluster import KMeans
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score, mutual_info_score
@@ -30,6 +31,26 @@ def cosine_normalize(X: np.ndarray) -> np.ndarray:
     return X / norms
 
 def embed_text(texts: List[str], model_name: str, batch_size=64, device=None) -> np.ndarray:
+    """
+    Embed a list of texts using either a SentenceTransformer or a plain HuggingFace
+    model with mean pooling.
+
+    Parameters
+    ----------
+    texts : list of str
+        The text inputs to embed.
+    model_name : str
+        Name of the model to load from HuggingFace.
+    batch_size : int
+        Batch size to use for embedding.
+    device : str or None
+        Device to run inference on ("cuda" or "cpu"). If None, will pick automatically.
+
+    Returns
+    -------
+    np.ndarray
+        A 2D array of shape (len(texts), hidden_dim) with L2-normalized embeddings.
+    """
     try:
         model = SentenceTransformer(model_name, device=device or ("cuda" if torch.cuda.is_available() else "cpu"))
         embs = model.encode(texts, batch_size=batch_size, show_progress_bar=True, normalize_embeddings=True)
@@ -48,7 +69,42 @@ def embed_text(texts: List[str], model_name: str, batch_size=64, device=None) ->
         return cosine_normalize(np.concatenate(out, axis=0).astype(np.float32))
 
 def embed_images(images, model_name: str, batch_size=64, device=None) -> np.ndarray:
+    """
+    Embed a list of PIL images using the specified vision model. Special handling is provided
+    for CLIP models, which require a different processor/model pairing and output extraction.
+
+    Parameters
+    ----------
+    images : list of PIL.Image
+        List of images to embed.
+    model_name : str
+        Name of the HuggingFace model. If it contains "clip", CLIPProcessor and CLIPModel
+        are used; otherwise, AutoImageProcessor and AutoModel are used.
+    batch_size : int
+        Batch size for processing images.
+    device : str or None
+        Device for inference ("cuda" or "cpu"). If None, the best available device is used.
+
+    Returns
+    -------
+    np.ndarray
+        L2-normalized embeddings of shape (len(images), hidden_dim).
+    """
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    # Special case for CLIP models: use CLIPProcessor and CLIPModel
+    if "clip" in model_name.lower():
+        processor = CLIPProcessor.from_pretrained(model_name)
+        model = CLIPModel.from_pretrained(model_name).to(device)
+        model.eval()
+        out = []
+        for i in tqdm(range(0, len(images), batch_size)):
+            batch = images[i:i+batch_size]
+            enc = processor(images=batch, return_tensors="pt").to(device)
+            with torch.no_grad():
+                reps = model.get_image_features(**enc).detach().cpu().numpy()
+            out.append(reps)
+        return cosine_normalize(np.concatenate(out, axis=0).astype(np.float32))
+    # Default path: ViT or other vision models
     processor = AutoImageProcessor.from_pretrained(model_name)
     model = AutoModel.from_pretrained(model_name).to(device)
     model.eval()
@@ -57,7 +113,8 @@ def embed_images(images, model_name: str, batch_size=64, device=None) -> np.ndar
         batch = images[i:i+batch_size]
         enc = processor(images=batch, return_tensors="pt").to(device)
         with torch.no_grad():
-            reps = model(**enc).last_hidden_states.mean(dim=1).detach().cpu().numpy()
+            # For vision models, use last_hidden_state (without trailing 's')
+            reps = model(**enc).last_hidden_state.mean(dim=1).detach().cpu().numpy()
         out.append(reps)
     return cosine_normalize(np.concatenate(out, axis=0).astype(np.float32))
 
@@ -221,3 +278,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
